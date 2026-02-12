@@ -22,10 +22,22 @@ export default function App() {
     const text = loaderTextRef.current;
     if (!ring || !text) return;
 
-    gsap.from(ring, { scale: 0, opacity: 0, duration: 0.5, ease: "back.out(1.4)" });
+    gsap.from(ring, {
+      scale: 0,
+      opacity: 0,
+      duration: 0.5,
+      ease: "back.out(1.4)",
+    });
     gsap.from(text, { opacity: 0, y: 8, duration: 0.4, delay: 0.2 });
-    const spin = gsap.to(ring, { rotation: 360, duration: 1, ease: "none", repeat: -1 });
-    return () => spin.kill();
+    const spin = gsap.to(ring, {
+      rotation: 360,
+      duration: 1,
+      ease: "none",
+      repeat: -1,
+    });
+    return () => {
+      spin.kill();
+    };
   }, [loading]);
 
   if (loading) {
@@ -36,7 +48,9 @@ export default function App() {
             ref={loaderRingRef}
             className="inline-block rounded-full h-12 w-12 border-4 border-border border-t-primary mb-4"
           />
-          <p ref={loaderTextRef} className="text-muted-foreground">Loading...</p>
+          <p ref={loaderTextRef} className="text-muted-foreground">
+            Loading...
+          </p>
         </div>
       </div>
     );
