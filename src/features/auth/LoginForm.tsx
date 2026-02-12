@@ -2,8 +2,9 @@ import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { login } from "./useAuth";
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { supabase } from "../../lib/supabase";
+import { loginPageAnimations } from "../../util/gsap";
 
 const loginSchema = z.object({
   email: z.string().min(1, "Email is required").email("Invalid email address"),
@@ -80,116 +81,47 @@ export default function LoginForm() {
 
   const currentForm = mode === "login" ? loginForm : signupForm;
   const onSubmit = mode === "login" ? onLogin : onSignup;
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let killGsap: (() => void) | undefined;
+    const id = requestAnimationFrame(() => {
+      killGsap = loginPageAnimations(containerRef.current);
+    });
+    return () => {
+      cancelAnimationFrame(id);
+      killGsap?.();
+    };
+  }, [mode]);
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
+    <div ref={containerRef} className="min-h-screen bg-background flex items-center justify-center p-4 relative overflow-hidden">
       {/* Abstract Decorative Shapes */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        {/* Top Left Ring - Pulsing */}
-        <div 
-          className="absolute -top-20 -left-20 w-64 h-64 border-8 border-primary"
-          style={{ 
-            borderRadius: "50%",
-            opacity: 0.06,
-            animation: "pulse 4s ease-in-out infinite"
-          }}
-        />
-        
-        {/* Top Right Square - Rotating */}
-        <div 
-          className="absolute top-32 -right-16 w-48 h-48 bg-secondary border-4 border-border animate-rotate-slow"
-          style={{ 
-            boxShadow: "var(--shadow-lg)",
-            opacity: 0.04
-          }}
-        />
-        
-        {/* Bottom Left Rectangle - Floating */}
-        <div 
-          className="absolute -bottom-12 -left-8 w-56 h-32 bg-accent border-4 border-border animate-float"
-          style={{ 
-            transform: "rotate(-8deg)",
-            boxShadow: "var(--shadow-md)",
-            opacity: 0.04
-          }}
-        />
-        
-        {/* Bottom Right Circle - Static */}
-        <div 
-          className="absolute bottom-24 -right-24 w-80 h-80 border-8 border-accent"
-          style={{ 
-            borderRadius: "50%",
-            opacity: 0.03
-          }}
-        />
-        
-        {/* Center Background Ring - Slow Pulse */}
-        <div 
-          className="absolute top-1/2 left-1/2 w-96 h-96 border-4 border-primary"
-          style={{ 
-            borderRadius: "50%",
-            transform: "translate(-50%, -50%)",
-            opacity: 0.006,
-            animation: "pulse-subtle 6s ease-in-out infinite"
-          }}
-        />
-
-        {/* Small Accent Squares */}
-        <div 
-          className="absolute top-1/4 right-1/4 w-12 h-12 bg-primary border-2 border-border animate-float"
-          style={{ 
-            transform: "rotate(45deg)",
-            opacity: 0.08,
-            animationDelay: "1s"
-          }}
-        />
-        <div 
-          className="absolute bottom-1/3 left-1/3 w-16 h-16 border-4 border-secondary"
-          style={{ 
-            transform: "rotate(25deg)",
-            opacity: 0.06,
-            animation: "pulse 3s ease-in-out infinite"
-          }}
-        />
-        
-        {/* Extra Wave-like Rectangles */}
-        <div 
-          className="absolute top-1/3 left-1/4 w-32 h-4 bg-primary border-2 border-border"
-          style={{ 
-            transform: "rotate(-15deg)",
-            opacity: 0.05,
-            animation: "float 5s ease-in-out infinite",
-            animationDelay: "0.5s"
-          }}
-        />
-        <div 
-          className="absolute top-2/3 right-1/3 w-40 h-3 bg-accent border-2 border-border"
-          style={{ 
-            transform: "rotate(20deg)",
-            opacity: 0.04,
-            animation: "float 7s ease-in-out infinite",
-            animationDelay: "1.5s"
-          }}
-        />
+        <div data-gsap-shape className="absolute -top-20 -left-20 w-64 h-64 border-8 border-primary" style={{ borderRadius: "50%", opacity: 0.06 }} />
+        <div data-gsap-shape className="absolute top-32 -right-16 w-48 h-48 bg-secondary border-4 border-border" style={{ boxShadow: "var(--shadow-lg)", opacity: 0.04 }} />
+        <div data-gsap-shape className="absolute -bottom-12 -left-8 w-56 h-32 bg-accent border-4 border-border" style={{ transform: "rotate(-8deg)", boxShadow: "var(--shadow-md)", opacity: 0.04 }} />
+        <div data-gsap-shape className="absolute bottom-24 -right-24 w-80 h-80 border-8 border-accent" style={{ borderRadius: "50%", opacity: 0.03 }} />
+        <div data-gsap-shape className="absolute top-1/2 left-1/2 w-96 h-96 border-4 border-primary" style={{ borderRadius: "50%", transform: "translate(-50%, -50%)", opacity: 0.008 }} />
+        <div data-gsap-shape className="absolute top-1/4 right-1/4 w-12 h-12 bg-primary border-2 border-border" style={{ transform: "rotate(45deg)", opacity: 0.08 }} />
+        <div data-gsap-shape className="absolute bottom-1/3 left-1/3 w-16 h-16 border-4 border-secondary" style={{ transform: "rotate(25deg)", opacity: 0.06 }} />
+        <div data-gsap-shape className="absolute top-1/3 left-1/4 w-32 h-4 bg-primary border-2 border-border" style={{ transform: "rotate(-15deg)", opacity: 0.05 }} />
+        <div data-gsap-shape className="absolute top-2/3 right-1/3 w-40 h-3 bg-accent border-2 border-border" style={{ transform: "rotate(20deg)", opacity: 0.04 }} />
       </div>
 
       {/* Main Content */}
-      <div className="w-full max-w-md animate-slide-in relative z-10">
-        {/* Header */}
+      <div className="w-full max-w-md relative z-10">
         <div className="mb-8 text-center">
-          <h1 className="text-5xl font-bold tracking-tight mb-3">
+          <h1 data-gsap-login-title className="text-5xl font-bold tracking-tight mb-3">
             {mode === "login" ? "Welcome" : "Sign Up"}
             <span className="text-primary">.</span>
           </h1>
-          <p className="text-muted-foreground">
-            {mode === "login" 
-              ? "Sign in to manage your todos" 
-              : "Create an account to get started"}
+          <p data-gsap-login-subtitle className="text-muted-foreground">
+            {mode === "login" ? "Sign in to manage your todos" : "Create an account to get started"}
           </p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={currentForm.handleSubmit(onSubmit as any)} className="space-y-6">
+        <form data-gsap-login-form onSubmit={currentForm.handleSubmit(onSubmit as any)} className="space-y-6">
           {/* Success Message */}
           {success && (
             <div
@@ -215,7 +147,7 @@ export default function LoginForm() {
           )}
 
           {/* Email Field */}
-          <div>
+          <div data-gsap-login-field>
             <label
               htmlFor="email"
               className="block text-sm font-medium mb-2 text-foreground"
@@ -240,7 +172,7 @@ export default function LoginForm() {
           </div>
 
           {/* Password Field */}
-          <div>
+          <div data-gsap-login-field>
             <label
               htmlFor="password"
               className="block text-sm font-medium mb-2 text-foreground"
@@ -268,7 +200,7 @@ export default function LoginForm() {
 
           {/* Confirm Password Field (Signup only) */}
           {mode === "signup" && (
-            <div>
+            <div data-gsap-login-field>
               <label
                 htmlFor="confirmPassword"
                 className="block text-sm font-medium mb-2 text-foreground"
@@ -297,6 +229,7 @@ export default function LoginForm() {
 
           {/* Submit Button */}
           <button
+            data-gsap-login-submit
             type="submit"
             disabled={isLoading}
             className="w-full px-6 py-3 bg-primary text-primary-foreground font-medium border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 active:translate-x-1 active:translate-y-1 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-150"
@@ -309,8 +242,9 @@ export default function LoginForm() {
         </form>
 
         {/* Toggle Mode */}
-        <div className="mt-6 text-center">
+        <div data-gsap-login-toggle className="mt-6 text-center">
           <button
+            type="button"
             onClick={toggleMode}
             className="text-sm text-muted-foreground hover:text-primary transition-colors duration-200"
           >

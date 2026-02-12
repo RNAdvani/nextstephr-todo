@@ -46,7 +46,7 @@ export const fetchTodos = async (): Promise<Todo[]> => {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  
+
   // Validate response data
   const validatedData = z.array(TodoSchema).parse(data);
   return validatedData;
@@ -79,15 +79,15 @@ export const updateTodo = async (input: UpdateTodoInput): Promise<void> => {
 
   const { id, ...updates } = input;
 
-  const { error } = await supabase
-    .from("todos")
-    .update(updates)
-    .eq("id", id);
+  const { error } = await supabase.from("todos").update(updates).eq("id", id);
 
   if (error) throw error;
 };
 
-export const toggleTodo = async (id: string, completed: boolean): Promise<void> => {
+export const toggleTodo = async (
+  id: string,
+  completed: boolean,
+): Promise<void> => {
   // Validate input
   z.string().uuid().parse(id);
 
@@ -107,12 +107,11 @@ export const deleteTodo = async (id: string): Promise<void> => {
   if (error) throw error;
 };
 
-export const reorderTodos = async (todos: { id: string; order: number }[]): Promise<void> => {
+export const reorderTodos = async (
+  todos: { id: string; order: number }[],
+): Promise<void> => {
   const updates = todos.map((todo) =>
-    supabase
-      .from("todos")
-      .update({ order: todo.order })
-      .eq("id", todo.id)
+    supabase.from("todos").update({ order: todo.order }).eq("id", todo.id),
   );
 
   await Promise.all(updates);

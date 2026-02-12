@@ -5,6 +5,7 @@ import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { logout } from "../auth/useAuth";
 import { useState, useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   DndContext,
   closestCenter,
@@ -23,6 +24,10 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { format, isPast, isToday, isTomorrow } from "date-fns";
 import type { Todo } from "./api";
+import { todoPageAnimations, modalAnimations } from "../../util/gsap";
+import AIPanel from "../ai/AIPanel";
+import { parseNaturalLanguageTodo } from "../ai/aiService";
+import { hasGeminiKey } from "../../lib/gemini";
 
 const todoSchema = z.object({
   title: z.string().min(1, "Todo cannot be empty").max(200, "Todo is too long"),
@@ -69,16 +74,18 @@ function SortableTodoItem({ todo, onToggle, onDelete }: {
   };
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={`group flex items-center gap-4 p-4 bg-card border-2 ${
-        isOverdue ? "border-primary" : "border-border"
-      } hover:translate-x-0.5 hover:translate-y-0.5 transition-all duration-200 animate-slide-in`}
-      {...attributes}
-    >
+    <div data-gsap-todo-item className="todo-item-wrapper">
+      <div
+        ref={setNodeRef}
+        style={style}
+        className={`group flex items-center gap-4 p-4 bg-card border-2 ${
+          isOverdue ? "border-primary" : "border-border"
+        } hover:translate-x-0.5 hover:translate-y-0.5 transition-all duration-200`}
+        {...attributes}
+      >
       {/* Drag Handle */}
       <button
+        type="button"
         {...listeners}
         className="cursor-grab active:cursor-grabbing p-1 hover:bg-muted transition-colors"
         aria-label="Drag to reorder"
@@ -130,14 +137,15 @@ function SortableTodoItem({ todo, onToggle, onDelete }: {
           {todo.tags && todo.tags.length > 0 && todo.tags.map((tag, idx) => (
             <span
               key={idx}
-              className="text-xs px-2 py-0.5 bg-secondary text-secondary-foreground border border-border"
+              className="tag-pill text-xs px-2 py-0.5 bg-secondary text-secondary-foreground border border-border"
+              style={{ animationDelay: `${idx * 0.05}s` }}
             >
               {tag}
             </span>
           ))}
           {todo.due_at && (
             <span
-              className={`text-xs px-2 py-0.5 border ${
+              className={`tag-pill text-xs px-2 py-0.5 border ${
                 isOverdue
                   ? "bg-primary text-primary-foreground border-primary"
                   : isDueToday
@@ -153,6 +161,7 @@ function SortableTodoItem({ todo, onToggle, onDelete }: {
 
       {/* Delete Button */}
       <button
+        type="button"
         onClick={onDelete}
         className="opacity-0 group-hover:opacity-100 p-2 hover:bg-destructive hover:text-destructive-foreground border-2 border-transparent hover:border-border transition-all duration-200 cursor-pointer"
         style={{ boxShadow: "var(--shadow-xs)" }}
@@ -170,12 +179,16 @@ function SortableTodoItem({ todo, onToggle, onDelete }: {
           <path d="M6 18L18 6M6 6l12 12"></path>
         </svg>
       </button>
+      </div>
     </div>
   );
 }
 
 // Keyboard Shortcuts Modal
 function KeyboardShortcutsModal({ onClose }: { onClose: () => void }) {
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -188,12 +201,21 @@ function KeyboardShortcutsModal({ onClose }: { onClose: () => void }) {
     return () => window.removeEventListener("keydown", handleEscape);
   }, [onClose]);
 
+  useEffect(() => {
+    const id = requestAnimationFrame(() => {
+      modalAnimations(backdropRef.current, contentRef.current);
+    });
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   return (
-    <div 
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-slide-in" 
+    <div
+      ref={backdropRef}
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
       onClick={onClose}
     >
       <div
+        ref={contentRef}
         className="bg-white border-2 border-border p-6 max-w-md w-full"
         style={{ boxShadow: "var(--shadow-lg)" }}
         onClick={(e) => e.stopPropagation()}
@@ -222,6 +244,7 @@ function KeyboardShortcutsModal({ onClose }: { onClose: () => void }) {
           </div>
         </div>
         <button
+          type="button"
           onClick={onClose}
           className="mt-6 w-full px-4 py-2 bg-primary text-primary-foreground font-medium border-2 border-border hover:translate-x-0.5 hover:translate-y-0.5 active:translate-x-1 active:translate-y-1 cursor-pointer transition-all duration-150"
           style={{ boxShadow: "var(--shadow)" }}
@@ -244,13 +267,18 @@ export default function TodoPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showAIPanel, setShowAIPanel] = useState(false);
+  const [aiParseLoading, setAiParseLoading] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const titleInputRef = useRef<HTMLInputElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const hasAnimatedRef = useRef(false);
 
   const {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
   } = useForm<TodoFormData>({
     resolver: zodResolver(todoSchema),
@@ -304,6 +332,13 @@ export default function TodoPage() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showShortcuts]);
 
+  useEffect(() => {
+    if (isLoading || hasAnimatedRef.current || !pageRef.current) return;
+    hasAnimatedRef.current = true;
+    const cleanup = todoPageAnimations(pageRef.current);
+    return cleanup;
+  }, [isLoading]);
+
   const onSubmit = async (data: TodoFormData) => {
     const tags = data.tags ? data.tags.split(",").map((t) => t.trim()).filter(Boolean) : [];
     await create.mutateAsync({
@@ -313,6 +348,51 @@ export default function TodoPage() {
       tags,
     });
     reset();
+  };
+
+  const handleAiParseAndAdd = async () => {
+    const raw = watch("title")?.trim();
+    if (!raw || !hasGeminiKey()) return;
+    setAiParseLoading(true);
+    try {
+      const parsed = await parseNaturalLanguageTodo(raw);
+      await create.mutateAsync({
+        title: parsed.title,
+        tags: parsed.tags,
+        due_at: parsed.due_at,
+        remind: parsed.remind,
+      });
+      reset();
+    } catch {
+      // fallback: add as plain title
+      await create.mutateAsync({ title: raw });
+      reset();
+    } finally {
+      setAiParseLoading(false);
+    }
+  };
+
+  const handleApplyOptimize = async (
+    updates: { id: string; order?: number; due_at?: string | null; remind?: boolean }[]
+  ) => {
+    if (!todos?.length) return;
+    const incompleteIds = updates.map((u) => u.id);
+    const completed = todos.filter((t) => t.completed);
+    const completedIds = completed.map((t) => t.id);
+    const orderUpdates = [
+      ...updates.sort((a, b) => (a.order ?? 0) - (b.order ?? 0)).map((u) => ({ id: u.id, order: u.order ?? 0 })),
+      ...completedIds.map((id, i) => ({ id, order: incompleteIds.length + i })),
+    ];
+    await reorder.mutateAsync(orderUpdates);
+    for (const u of updates) {
+      if (u.due_at !== undefined || u.remind !== undefined) {
+        await update.mutateAsync({
+          id: u.id,
+          ...(u.due_at !== undefined && { due_at: u.due_at }),
+          ...(u.remind !== undefined && { remind: u.remind }),
+        });
+      }
+    }
   };
 
   const handleLogout = async () => {
@@ -367,15 +447,28 @@ export default function TodoPage() {
 
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-3xl">
+      <div ref={pageRef} className="w-full max-w-3xl">
         {/* Header */}
-        <div className="mb-8 animate-slide-in">
+        <div data-gsap-todo-header className="mb-8">
           <div className="flex items-center justify-between mb-2">
             <h1 className="text-5xl font-bold tracking-tight">
               Todo<span className="text-primary">.</span>
             </h1>
             <div className="flex gap-2">
               <button
+                type="button"
+                onClick={() => setShowAIPanel(true)}
+                className="p-2 border-2 border-border bg-card hover:bg-muted hover:translate-x-0.5 hover:translate-y-0.5 active:translate-x-1 active:translate-y-1 cursor-pointer transition-all duration-150"
+                style={{ boxShadow: "var(--shadow-sm)" }}
+                title="Open AI Assistant"
+                aria-label="Open AI panel"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowShortcuts(true)}
                 className="px-4 py-2 text-lg border-2 border-border bg-card hover:bg-muted hover:translate-x-0.5 hover:translate-y-0.5 active:translate-x-1 active:translate-y-1 cursor-pointer transition-all duration-150"
                 style={{ boxShadow: "var(--shadow-sm)" }}
@@ -385,6 +478,7 @@ export default function TodoPage() {
                 ⌨️
               </button>
               <button
+                type="button"
                 onClick={handleLogout}
                 className="px-4 py-2 text-sm font-medium border-2 border-border bg-card hover:bg-destructive hover:text-destructive-foreground hover:translate-x-0.5 hover:translate-y-0.5 active:translate-x-1 active:translate-y-1 cursor-pointer transition-all duration-150"
                 style={{ boxShadow: "var(--shadow-sm)" }}
@@ -401,7 +495,7 @@ export default function TodoPage() {
         </div>
 
         {/* Search Bar */}
-        <div className="mb-4 animate-slide-in">
+        <div data-gsap-todo-search className="mb-4">
           <input
             ref={searchInputRef}
             type="text"
@@ -413,7 +507,7 @@ export default function TodoPage() {
         </div>
 
         {/* Add Todo Form */}
-        <form onSubmit={handleSubmit(onSubmit)} className="mb-8 animate-slide-in">
+        <form data-gsap-todo-add-form onSubmit={handleSubmit(onSubmit)} className="mb-8">
           <div className="space-y-3">
             <div className="flex gap-3">
               <div className="flex-1">
@@ -423,7 +517,7 @@ export default function TodoPage() {
                     register("title").ref(e);
                     (titleInputRef as any).current = e;
                   }}
-                  placeholder="What needs to be done? (Ctrl+Enter)"
+                  placeholder={hasGeminiKey() ? "Type naturally or use ✨ AI (Ctrl+Enter)" : "What needs to be done? (Ctrl+Enter)"}
                   className={`w-full px-4 py-3 border-2 ${
                     errors.title ? "border-primary" : "border-border"
                   } bg-card text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-4 focus:ring-ring/20 transition-all`}
@@ -435,6 +529,17 @@ export default function TodoPage() {
                   </p>
                 )}
               </div>
+              {hasGeminiKey() && (
+                <button
+                  type="button"
+                  onClick={handleAiParseAndAdd}
+                  disabled={create.isPending || aiParseLoading || !watch("title")?.trim()}
+                  className="px-4 py-3 border-2 border-border bg-card font-medium hover:bg-muted disabled:opacity-50 cursor-pointer transition-all duration-150"
+                  title="Parse with AI and add (tags, due, remind)"
+                >
+                  {aiParseLoading ? "..." : "✨ AI"}
+                </button>
+              )}
               <button
                 type="submit"
                 disabled={create.isPending}
@@ -472,25 +577,28 @@ export default function TodoPage() {
 
         {/* Tags Filter */}
         {allTags.length > 0 && (
-          <div className="mb-6 animate-slide-in flex gap-2 flex-wrap">
+          <div className="mb-6 flex gap-2 flex-wrap">
             <span className="text-sm text-muted-foreground py-2">Tags:</span>
-            {allTags.map((tag) => (
+            {allTags.map((tag, idx) => (
               <button
+                type="button"
                 key={tag}
                 onClick={() => setSelectedTag(selectedTag === tag ? null : tag)}
-                className={`px-3 py-1 text-sm border-2 border-border transition-all duration-200 ${
+                className={`tag-pill px-3 py-1 text-sm border-2 border-border cursor-pointer ${
                   selectedTag === tag
                     ? "bg-secondary text-secondary-foreground"
                     : "bg-card text-foreground hover:bg-muted"
                 }`}
+                style={{ animationDelay: `${idx * 0.04}s` }}
               >
                 {tag}
               </button>
             ))}
             {selectedTag && (
               <button
+                type="button"
                 onClick={() => setSelectedTag(null)}
-                className="px-3 py-1 text-sm border-2 border-border bg-muted hover:bg-destructive hover:text-destructive-foreground transition-all duration-200"
+                className="tag-pill px-3 py-1 text-sm border-2 border-border bg-muted hover:bg-destructive hover:text-destructive-foreground cursor-pointer"
               >
                 Clear
               </button>
@@ -500,8 +608,9 @@ export default function TodoPage() {
 
         {/* Filter Tabs */}
         {todos && todos.length > 0 && (
-          <div className="mb-6 flex gap-2 animate-slide-in" style={{ animationDelay: "100ms" }}>
+          <div data-gsap-todo-filters className="mb-6 flex gap-2">
             <button
+              type="button"
               onClick={() => setFilter("all")}
               className={`px-4 py-2 text-sm font-medium border-2 border-border transition-all duration-200 cursor-pointer ${
                 filter === "all"
@@ -513,6 +622,7 @@ export default function TodoPage() {
               All ({totalCount})
             </button>
             <button
+              type="button"
               onClick={() => setFilter("active")}
               className={`px-4 py-2 text-sm font-medium border-2 border-border transition-all duration-200 cursor-pointer ${
                 filter === "active"
@@ -524,6 +634,7 @@ export default function TodoPage() {
               Active ({activeCount})
             </button>
             <button
+              type="button"
               onClick={() => setFilter("completed")}
               className={`px-4 py-2 text-sm font-medium border-2 border-border transition-all duration-200 cursor-pointer ${
                 filter === "completed"
@@ -538,7 +649,7 @@ export default function TodoPage() {
         )}
 
         {/* Todo List with Drag & Drop */}
-        <div className="space-y-3">
+        <div data-gsap-todo-list className="space-y-3">
           {isLoading ? (
             <div className="text-center py-12 text-muted-foreground">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-4 border-border border-t-primary mb-4"></div>
@@ -594,7 +705,7 @@ export default function TodoPage() {
 
         {/* Stats Footer */}
         {todos && todos.length > 0 && (
-          <div className="mt-8 p-4 bg-muted border-2 border-border animate-slide-in" style={{ boxShadow: "var(--shadow-sm)" }}>
+          <div data-gsap-todo-footer className="mt-8 p-4 bg-muted border-2 border-border" style={{ boxShadow: "var(--shadow-sm)" }}>
             <div className="flex justify-between items-center text-sm">
               <span className="text-muted-foreground">
                 {totalCount} {totalCount === 1 ? "task" : "tasks"} total
@@ -610,8 +721,31 @@ export default function TodoPage() {
         )}
       </div>
 
-      {/* Keyboard Shortcuts Modal */}
-      {showShortcuts && <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />}
+      {/* AI Panel - slide in from right (navbar style, no backdrop) */}
+      {showAIPanel && (
+          <div
+            className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-sm bg-card border-2 border-border border-r-0 ai-panel-enter flex flex-col"
+            style={{ boxShadow: "var(--shadow-lg)" }}
+            role="dialog"
+            aria-label="AI Assistant"
+          >
+            <AIPanel
+              todos={todos ?? []}
+              onAddTodo={(input) => create.mutate(input)}
+              onApplyOptimize={handleApplyOptimize}
+              createPending={create.isPending}
+              isOpen={showAIPanel}
+              onClose={() => setShowAIPanel(false)}
+            />
+          </div>
+      )}
+
+      {/* Keyboard Shortcuts Modal - render in portal so it's always on top */}
+      {showShortcuts &&
+        createPortal(
+          <KeyboardShortcutsModal onClose={() => setShowShortcuts(false)} />,
+          document.body
+        )}
     </div>
   );
 }
