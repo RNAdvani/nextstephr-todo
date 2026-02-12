@@ -446,8 +446,13 @@ export default function TodoPage() {
   });
 
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div ref={pageRef} className="w-full max-w-3xl">
+    <div
+      className={`min-h-screen bg-background flex ${showAIPanel ? "h-screen overflow-hidden" : ""}`}
+    >
+      <div
+        className={`flex-1 flex justify-center min-w-0 transition-[width] duration-300 ease-out p-4 ${showAIPanel ? "min-h-0 overflow-auto items-start pt-6" : "items-center"}`}
+      >
+        <div ref={pageRef} className="w-full max-w-3xl">
         {/* Header */}
         <div data-gsap-todo-header className="mb-8">
           <div className="flex items-center justify-between mb-2">
@@ -719,12 +724,17 @@ export default function TodoPage() {
             </div>
           </div>
         )}
+        </div>
       </div>
 
-      {/* AI Panel - slide in from right (navbar style, no backdrop) */}
-      {showAIPanel && (
+      {/* AI Panel - in flow, column width animates so main content slides left */}
+      <div
+        className={`overflow-hidden flex flex-col transition-[width] duration-300 ease-out ${showAIPanel ? "w-96 h-screen shrink-0" : "w-0"}`}
+        aria-hidden={!showAIPanel}
+      >
+        {showAIPanel && (
           <div
-            className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-sm bg-card border-2 border-border border-r-0 ai-panel-enter flex flex-col"
+            className="w-96 min-w-96 h-full flex flex-col bg-card border-2 border-border shrink-0"
             style={{ boxShadow: "var(--shadow-lg)" }}
             role="dialog"
             aria-label="AI Assistant"
@@ -738,7 +748,8 @@ export default function TodoPage() {
               onClose={() => setShowAIPanel(false)}
             />
           </div>
-      )}
+        )}
+      </div>
 
       {/* Keyboard Shortcuts Modal - render in portal so it's always on top */}
       {showShortcuts &&
