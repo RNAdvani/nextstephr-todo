@@ -146,13 +146,18 @@ export default function AIPanel({
         const results = await searchTodos(todos, q || "");
         setSearchResults(results);
         setView("search");
-      } else if (lower === "@edit" || lower.startsWith("@edit")) {
+      } else if (
+        lower === "@edit" ||
+        lower.startsWith("@edit") ||
+        /^(edit|change|update|modify)\s/i.test(lower) ||
+        /\b(edit|change|update)\s+.+\s+(to|into)\s+/i.test(raw)
+      ) {
         const instruction = raw.replace(/^@edit\s*/i, "").trim();
-        if (!instruction) {
+        if (!instruction && (lower === "@edit" || lower.startsWith("@edit"))) {
           setErrorMessage("Add an edit instruction, e.g. @edit buy eggs add due tomorrow");
           setView("error");
         } else {
-          const result = await processEditRequest(instruction, todos);
+          const result = await processEditRequest(instruction || raw, todos);
           if (result) {
             const target = todos.find((t) => t.id === result.todoId);
             setEditTargetTodo(target ?? null);

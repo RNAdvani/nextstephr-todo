@@ -158,7 +158,8 @@ Rules:
 - remind: true/false if user mentioned reminders.
 
 Examples:
-- "edit buy eggs to add due tomorrow" -> {"todoId":"<id of buy eggs>","updates":{"due_at":"2025-02-22"}}
+- "edit buy eggs to add due tomorrow" -> {"todoId":"<id of buy eggs>","updates":{"due_at":"${tomorrow}"}}
+- "edit buy eggs and make it buy eggs and chicken" -> {"todoId":"<id of buy eggs>","updates":{"title":"Buy eggs and chicken"}}
 - "change the first todo to say buy organic eggs" -> {"todoId":"<id of first>","updates":{"title":"Buy organic eggs"}}
 - "add tag urgent to call John" -> {"todoId":"<id of call John>","updates":{"tags":["urgent",...existing]}}
 
