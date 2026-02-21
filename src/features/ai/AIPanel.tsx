@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from "react";
 import {
-  parseNaturalLanguageTodo,
+  processSmartRequest,
   getDailyBrief,
   getOptimizedPlan,
+  processEditRequest,
 } from "./aiService";
+import { searchTodos } from "../../util/search";
 import { hasGeminiKey } from "../../lib/gemini";
-import type { ParsedTodo, OptimizedPlan } from "./types";
+import type { ParsedTodo, OptimizedPlan, EditTodoResult } from "./types";
 import type { Todo } from "../todos/api";
 import type { CreateTodoInput } from "../todos/api";
 
@@ -16,13 +18,16 @@ const COMMANDS = [
     description: "Get optimized task order & reminders",
   },
   { slug: "brief", label: "@brief", description: "Your day in 60 seconds" },
+  { slug: "search", label: "@search", description: "Semantic & fuzzy search (e.g. poultry → eggs)" },
+  { slug: "edit", label: "@edit", description: "Edit a todo with natural language" },
 ] as const;
 
-type PanelView = "idle" | "parsed" | "brief" | "optimize" | "loading" | "error";
+type PanelView = "idle" | "parsed" | "generated" | "view_mine" | "brief" | "optimize" | "search" | "edit" | "loading" | "error";
 
 interface AIPanelProps {
   todos: Todo[];
   onAddTodo: (input: CreateTodoInput) => void;
+  onUpdateTodo?: (id: string, updates: Partial<CreateTodoInput>) => void;
   onApplyOptimize: (
     updates: {
       id: string;
@@ -39,6 +44,7 @@ interface AIPanelProps {
 export default function AIPanel({
   todos,
   onAddTodo,
+  onUpdateTodo,
   onApplyOptimize,
   createPending,
   isOpen,
@@ -47,10 +53,15 @@ export default function AIPanel({
   const [input, setInput] = useState("");
   const [view, setView] = useState<PanelView>("idle");
   const [parsedTodo, setParsedTodo] = useState<ParsedTodo | null>(null);
+  const [generatedTodos, setGeneratedTodos] = useState<ParsedTodo[]>([]);
   const [briefText, setBriefText] = useState("");
   const [optimizedPlan, setOptimizedPlan] = useState<OptimizedPlan | null>(
     null,
   );
+  const [searchResults, setSearchResults] = useState<Todo[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [editResult, setEditResult] = useState<EditTodoResult | null>(null);
+  const [editTargetTodo, setEditTargetTodo] = useState<Todo | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [commandHighlight, setCommandHighlight] = useState(0);
   const [commandListOpen, setCommandListOpen] = useState(false);
@@ -129,10 +140,40 @@ export default function AIPanel({
         const brief = await getDailyBrief(todos);
         setBriefText(brief);
         setView("brief");
+      } else if (lower === "@search" || lower.startsWith("@search")) {
+        const q = raw.replace(/^@search\s*/i, "").trim();
+        setSearchQuery(q || "(all)");
+        const results = await searchTodos(todos, q || "");
+        setSearchResults(results);
+        setView("search");
+      } else if (lower === "@edit" || lower.startsWith("@edit")) {
+        const instruction = raw.replace(/^@edit\s*/i, "").trim();
+        if (!instruction) {
+          setErrorMessage("Add an edit instruction, e.g. @edit buy eggs add due tomorrow");
+          setView("error");
+        } else {
+          const result = await processEditRequest(instruction, todos);
+          if (result) {
+            const target = todos.find((t) => t.id === result.todoId);
+            setEditTargetTodo(target ?? null);
+            setEditResult(result);
+            setView("edit");
+          } else {
+            setErrorMessage("Could not find a matching todo to edit.");
+            setView("error");
+          }
+        }
       } else {
-        const parsed = await parseNaturalLanguageTodo(raw);
-        setParsedTodo(parsed);
-        setView("parsed");
+        const result = await processSmartRequest(raw);
+        if (result.type === "view_mine") {
+          setView("view_mine");
+        } else if (result.type === "single") {
+          setParsedTodo(result.todo);
+          setView("parsed");
+        } else {
+          setGeneratedTodos(result.todos);
+          setView("generated");
+        }
       }
     } catch (err) {
       setView("error");
@@ -153,6 +194,39 @@ export default function AIPanel({
       remind: parsedTodo.remind,
     });
     setParsedTodo(null);
+    setView("idle");
+  }
+
+  function handleAddGenerated(todo: ParsedTodo) {
+    onAddTodo({
+      title: todo.title,
+      tags: todo.tags,
+      due_at: todo.due_at,
+      remind: todo.remind,
+    });
+    setGeneratedTodos((prev) => prev.filter((t) => t !== todo));
+    if (generatedTodos.length <= 1) setView("idle");
+  }
+
+  function handleAddAllGenerated() {
+    generatedTodos.forEach((todo) => {
+      onAddTodo({
+        title: todo.title,
+        tags: todo.tags,
+        due_at: todo.due_at,
+        remind: todo.remind,
+      });
+    });
+    setGeneratedTodos([]);
+    setView("idle");
+  }
+
+  function handleApplyEdit() {
+    if (!editResult || !onUpdateTodo) return;
+    const { todoId, updates } = editResult;
+    onUpdateTodo(todoId, updates);
+    setEditResult(null);
+    setEditTargetTodo(null);
     setView("idle");
   }
 
@@ -218,7 +292,7 @@ export default function AIPanel({
       {header}
       <div className="p-3 border-b-2 border-border shrink-0">
         <p className="text-xs text-muted-foreground mb-2">
-          Type a task, or <code>@optimize</code> / <code>@brief</code>
+          Type a task, or <code>@optimize</code> / <code>@brief</code> / <code>@search</code> / <code>@edit</code>
         </p>
         <form onSubmit={handleSubmit} className="relative">
           <input
@@ -277,7 +351,7 @@ export default function AIPanel({
       <div className="flex-1 overflow-auto p-3">
         {view === "idle" && (
           <p className="text-sm text-muted-foreground">
-            Try: &quot;call mom tomorrow with tag personal&quot; or @optimize
+            Try: &quot;give me my todos&quot;, add a task, @search poultry, @edit buy eggs add due tomorrow, or @optimize / @brief
           </p>
         )}
 
@@ -320,6 +394,96 @@ export default function AIPanel({
                 type="button"
                 onClick={() => {
                   setParsedTodo(null);
+                  setView("idle");
+                }}
+                className="py-2 px-3 border-2 border-border text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === "view_mine" && (
+          <div className="space-y-3">
+            <p className="text-sm font-medium">Your todos</p>
+            {todos.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No todos yet. Add one or ask for suggestions for a topic (e.g. &quot;give me todos for moving&quot;).
+              </p>
+            ) : (
+              <ul className="space-y-2 text-sm max-h-64 overflow-auto">
+                {todos.map((t) => (
+                  <li
+                    key={t.id}
+                    className="p-2 border-2 border-border bg-muted/20 flex items-center gap-2"
+                  >
+                    {t.completed && (
+                      <span className="text-muted-foreground text-xs">Done</span>
+                    )}
+                    <span className={t.completed ? "line-through text-muted-foreground" : "font-medium"}>
+                      {t.title}
+                    </span>
+                    {t.due_at && (
+                      <span className="text-xs text-muted-foreground">Due {t.due_at}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button
+              type="button"
+              onClick={() => setView("idle")}
+              className="py-2 px-3 border-2 border-border text-sm"
+            >
+              Close
+            </button>
+          </div>
+        )}
+
+        {view === "generated" && generatedTodos.length > 0 && (
+          <div className="space-y-3">
+            <p className="text-sm font-medium">
+              {generatedTodos.length} task{generatedTodos.length !== 1 ? "s" : ""} suggested
+            </p>
+            <ul className="space-y-2 text-sm">
+              {generatedTodos.map((todo, i) => (
+                <li
+                  key={i}
+                  className="p-3 border-2 border-border bg-muted/20 flex flex-col gap-2"
+                >
+                  <p className="font-medium">{todo.title}</p>
+                  {(todo.tags?.length > 0 || todo.due_at || todo.remind) && (
+                    <p className="text-muted-foreground text-xs">
+                      {todo.tags?.length ? todo.tags.join(", ") : ""}
+                      {todo.due_at ? ` · Due ${todo.due_at}` : ""}
+                      {todo.remind ? " · Remind" : ""}
+                    </p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleAddGenerated(todo)}
+                    disabled={createPending}
+                    className="self-start py-1.5 px-3 bg-primary text-primary-foreground text-xs font-medium border-2 border-border"
+                  >
+                    Add
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleAddAllGenerated}
+                disabled={createPending}
+                className="flex-1 py-2 bg-primary text-primary-foreground text-sm font-medium border-2 border-border"
+              >
+                {createPending ? "Adding..." : "Add all to list"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setGeneratedTodos([]);
                   setView("idle");
                 }}
                 className="py-2 px-3 border-2 border-border text-sm"
@@ -397,6 +561,88 @@ export default function AIPanel({
             >
               Cancel
             </button>
+          </div>
+        )}
+
+        {view === "search" && (
+          <div className="space-y-3">
+            <p className="text-sm font-medium">
+              Search: &quot;{searchQuery}&quot; — {searchResults.length} result{searchResults.length !== 1 ? "s" : ""}
+            </p>
+            {searchResults.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No matching todos. Try different keywords (e.g. poultry → eggs).
+              </p>
+            ) : (
+              <ul className="space-y-2 text-sm max-h-64 overflow-auto">
+                {searchResults.map((t) => (
+                  <li
+                    key={t.id}
+                    className="p-2 border-2 border-border bg-muted/20 flex items-center gap-2"
+                  >
+                    {t.completed && (
+                      <span className="text-muted-foreground text-xs">Done</span>
+                    )}
+                    <span className={t.completed ? "line-through text-muted-foreground" : "font-medium"}>
+                      {t.title}
+                    </span>
+                    {t.due_at && (
+                      <span className="text-xs text-muted-foreground">Due {t.due_at}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button
+              type="button"
+              onClick={() => setView("idle")}
+              className="py-2 px-3 border-2 border-border text-sm"
+            >
+              Close
+            </button>
+          </div>
+        )}
+
+        {view === "edit" && editResult && editTargetTodo && (
+          <div className="space-y-3">
+            <p className="text-sm font-medium">Edit this todo?</p>
+            <div className="p-3 border-2 border-border bg-muted/30 text-sm space-y-2">
+              <p>
+                <span className="text-muted-foreground">Current:</span> {editTargetTodo.title}
+                {editTargetTodo.due_at && ` · Due ${editTargetTodo.due_at}`}
+                {editTargetTodo.tags?.length ? ` [${editTargetTodo.tags.join(", ")}]` : ""}
+              </p>
+              <p>
+                <span className="text-muted-foreground">Changes:</span>{" "}
+                {editResult.updates.title && `Title → ${editResult.updates.title}`}
+                {editResult.updates.due_at !== undefined && ` · Due → ${editResult.updates.due_at ?? "none"}`}
+                {editResult.updates.tags?.length ? ` · Tags → ${editResult.updates.tags.join(", ")}` : ""}
+                {editResult.updates.remind !== undefined && ` · Remind → ${editResult.updates.remind}`}
+                {!editResult.updates.title && !editResult.updates.due_at && !editResult.updates.tags?.length && editResult.updates.remind === undefined && "—"}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              {onUpdateTodo && (
+                <button
+                  type="button"
+                  onClick={handleApplyEdit}
+                  className="flex-1 py-2 bg-primary text-primary-foreground text-sm font-medium border-2 border-border"
+                >
+                  Apply
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setEditResult(null);
+                  setEditTargetTodo(null);
+                  setView("idle");
+                }}
+                className="py-2 px-3 border-2 border-border text-sm"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
       </div>

@@ -28,6 +28,7 @@ import { todoPageAnimations, modalAnimations } from "../../util/gsap";
 import AIPanel from "../ai/AIPanel";
 import { parseNaturalLanguageTodo } from "../ai/aiService";
 import { hasGeminiKey } from "../../lib/gemini";
+import { todoMatchesFuzzy, semanticSearchTodoIds } from "../../util/search";
 
 const todoSchema = z.object({
   title: z.string().min(1, "Todo cannot be empty").max(200, "Todo is too long"),
@@ -265,6 +266,7 @@ export default function TodoPage() {
   const reorder = useReorderTodos();
   const [filter, setFilter] = useState<FilterType>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [semanticRelatedIds, setSemanticRelatedIds] = useState<Set<string>>(new Set());
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAIPanel, setShowAIPanel] = useState(false);
@@ -331,6 +333,19 @@ export default function TodoPage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [showShortcuts]);
+
+  // Debounced semantic search (e.g. "poultry" finds "buy eggs")
+  useEffect(() => {
+    if (!searchQuery.trim() || !todos?.length || !hasGeminiKey()) {
+      setSemanticRelatedIds(new Set());
+      return;
+    }
+    const t = setTimeout(async () => {
+      const ids = await semanticSearchTodoIds(todos, searchQuery);
+      setSemanticRelatedIds(new Set(ids));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [searchQuery, todos]);
 
   useEffect(() => {
     if (isLoading || hasAnimatedRef.current || !pageRef.current) return;
@@ -432,9 +447,11 @@ export default function TodoPage() {
     if (filter === "active" && todo.completed) return false;
     if (filter === "completed" && !todo.completed) return false;
 
-    // Filter by search
-    if (searchQuery && !todo.title.toLowerCase().includes(searchQuery.toLowerCase())) {
-      return false;
+    // Filter by search (fuzzy + semantic when Gemini key exists)
+    if (searchQuery) {
+      const fuzzyMatch = todoMatchesFuzzy(todo, searchQuery);
+      const semanticMatch = semanticRelatedIds.has(todo.id);
+      if (!fuzzyMatch && !semanticMatch) return false;
     }
 
     // Filter by tag
@@ -742,6 +759,7 @@ export default function TodoPage() {
             <AIPanel
               todos={todos ?? []}
               onAddTodo={(input) => create.mutate(input)}
+              onUpdateTodo={(id, updates) => update.mutate({ id, ...updates })}
               onApplyOptimize={handleApplyOptimize}
               createPending={create.isPending}
               isOpen={showAIPanel}

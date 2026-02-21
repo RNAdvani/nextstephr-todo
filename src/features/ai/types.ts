@@ -18,3 +18,13 @@ export interface OptimizedPlan {
   summary: string;
   items: OptimizedItem[];
 }
+
+export type SmartTodoResponse =
+  | { type: "single"; todo: ParsedTodo }
+  | { type: "multiple"; todos: ParsedTodo[] }
+  | { type: "view_mine" };
+
+export interface EditTodoResult {
+  todoId: string;
+  updates: Partial<ParsedTodo>;
+}
